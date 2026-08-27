@@ -187,31 +187,45 @@ Acesse `http://localhost:8000`.
 
 ---
 
-## ☁️ Deploy no Google Cloud Compute Engine (VM)
+## ☁️ Deploy no Google Cloud Compute Engine com Terraform (IaC)
 
-### Passo 1: Executar script de provisionamento
+A infraestrutura completa na nuvem é provisionada de forma 100% automatizada com **Terraform**, criando:
+* **VPC Customizada** (`telemetry-vpc`) e **Subnet** em `us-central1` (`10.10.0.0/24`).
+* **Cloud Router** e **Cloud NAT** para saída segura à internet.
+* **Regras de Firewall**: Acesso SSH (IAP / Internet), porta `8000` (Dashboard Web e Ingestão REST), e tráfego interno.
+* **Service Account** com permissões de métricas e logs (`Cloud Logging` / `Cloud Monitoring`).
+* **Instância Compute Engine VM** (`e2-small` em `us-central1-a`) com inicialização automática via `startup-script` (clona o repositório, instala dependências e inicia o serviço systemd).
+
+### 1. Deploy Automatizado (1-Click)
 ```bash
-chmod +x deploy_vm.sh
-./deploy_vm.sh
+cd /home/anselmodanilo/dev/demo_telemetria/terraform
+./deploy.sh
 ```
 
-### Passo 2: Copiar código para a VM
+### 2. Ou Execução Manual via Terraform CLI
 ```bash
-gcloud compute scp --recurse . vm-telemetria-frota-brasil:/opt/demo_telemetria --zone=southamerica-east1-a
+cd /home/anselmodanilo/dev/demo_telemetria/terraform
+cp terraform.tfvars.example terraform.tfvars # ajuste o project_id se desejar
+terraform init
+terraform plan
+terraform apply
 ```
 
-### Passo 3: Ativar o Serviço Systemd na VM
+### 3. Acompanhar a Inicialização na VM
+Após o provisionamento (cerca de 1 a 2 minutos), acesse:
 ```bash
-gcloud compute ssh vm-telemetria-frota-brasil --zone=southamerica-east1-a --command="
-  sudo cp /opt/demo_telemetria/telemetry_service.service /etc/systemd/system/
-  sudo systemctl daemon-reload
-  sudo systemctl enable telemetry_service
-  sudo systemctl start telemetry_service
-  sudo systemctl status telemetry_service
-"
+# Visualizar logs do startup script e serviço na VM
+gcloud compute ssh telemetry-simulator-vm --zone=us-central1-a --command="sudo journalctl -u telemetry_service -f"
 ```
 
-Acesse o IP público da sua VM na porta 8000: `http://<EXTERNAL_IP>:8000`
+Acesse o Dashboard Web interativo diretamente no navegador:
+👉 **`http://<IP_PUBLICO_DA_VM>:8000`**
+
+### 4. Destruição dos Recursos (Teardown)
+```bash
+cd /home/anselmodanilo/dev/demo_telemetria/terraform
+./destroy.sh
+```
 
 ---
 
@@ -219,10 +233,19 @@ Acesse o IP público da sua VM na porta 8000: `http://<EXTERNAL_IP>:8000`
 
 ```
 demo_telemetria/
+├── terraform/                  # Infraestrutura como Código (IaC) no GCP
+│   ├── main.tf                 # VPC, Subnet, NAT, Firewalls, VM e Service Account
+│   ├── variables.tf            # Parâmetros customizáveis (região, máquina, etc)
+│   ├── outputs.tf              # IPs, URLs do Dashboard e comandos SSH
+│   ├── terraform.tfvars.example# Exemplo de variáveis de ambiente
+│   ├── deploy.sh               # Script de deploy automatizado (1-click)
+│   ├── destroy.sh              # Script de destruição e limpeza
+│   └── scripts/
+│       └── startup.sh.tftpl    # Script de inicialização automática da VM
 ├── .env.example                # Configurações de ambiente
 ├── Dockerfile                  # Imagem container para nuvem
 ├── docker-compose.yml          # Orquestração local
-├── deploy_vm.sh                # Script de provisionamento GCP Compute Engine
+├── deploy_vm.sh                # Script de provisionamento alternativo via gcloud
 ├── telemetry_service.service   # Arquivo de serviço Linux systemd
 ├── requirements.txt            # Dependências Python
 ├── pytest.ini                  # Configurações do Pytest

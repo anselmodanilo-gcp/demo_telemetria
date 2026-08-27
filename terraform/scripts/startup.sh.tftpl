@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Compute Engine VM Startup Script for Commercial Vehicle Telemetry Simulator
+# ==============================================================================
+set -euo pipefail
+
+LOG_FILE="/var/log/telemetry_startup.log"
+exec > >(tee -a "$${LOG_FILE}") 2>&1
+
+echo "=============================================================================="
+echo "🚀 [$(date -u)] Iniciando provisionamento do Telemetry Simulator na VM"
+echo "=============================================================================="
+
+# 1. Update packages and install prerequisites
+echo "📦 1. Atualizando pacotes do sistema e instalando dependências..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends \
+    git \
+    python3 \
+    python3-pip \
+    python3-venv \
+    curl \
+    sqlite3 \
+    ca-certificates \
+    net-tools
+
+# 2. Create system user for service isolation
+echo "👤 2. Criando usuário de serviço 'telemetry'..."
+if ! id "telemetry" &>/dev/null; then
+    useradd --system --no-create-home --shell /bin/false telemetry
+fi
+
+# 3. Clone / checkout repository
+APP_DIR="/opt/demo_telemetria"
+REPO_URL="${git_repo_url}"
+BRANCH="${git_branch}"
+
+echo "📥 3. Sincronizando código fonte de $${REPO_URL} (branch: $${BRANCH})..."
+if [ -d "$${APP_DIR}/.git" ]; then
+    echo "Repositório já existe. Atualizando..."
+    cd "$${APP_DIR}"
+    git fetch origin
+    git checkout "$${BRANCH}"
+    git pull origin "$${BRANCH}"
+else
+    mkdir -p "$${APP_DIR}"
+    git clone -b "$${BRANCH}" "$${REPO_URL}" "$${APP_DIR}"
+    cd "$${APP_DIR}"
+fi
+
+# 4. Create and configure Python virtual environment
+echo "🐍 4. Configurando ambiente virtual Python (.venv)..."
+python3 -m venv "$${APP_DIR}/.venv"
+"$${APP_DIR}/.venv/bin/pip" install --upgrade pip setuptools wheel
+"$${APP_DIR}/.venv/bin/pip" install -r "$${APP_DIR}/requirements.txt"
+
+# 5. Configure environment variables (.env)
+echo "⚙️  5. Configurando arquivo de ambiente .env..."
+if [ ! -f "$${APP_DIR}/.env" ]; then
+    cp "$${APP_DIR}/.env.example" "$${APP_DIR}/.env"
+fi
+sed -i 's/^SIMULATION_INTERVAL_SECONDS=.*/SIMULATION_INTERVAL_SECONDS=${simulation_interval}/' "$${APP_DIR}/.env"
+
+# 6. Set correct permissions
+chown -R telemetry:telemetry "$${APP_DIR}"
+chmod -R 755 "$${APP_DIR}"
+
+# 7. Install and enable Systemd Service
+echo "🔧 6. Configurando serviço Systemd (telemetry_service.service)..."
+cat << 'EOF' > /etc/systemd/system/telemetry_service.service
+[Unit]
+Description=GCP Commercial Vehicle Telemetry Simulation Service & Dashboard
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telemetry
+Group=telemetry
+WorkingDirectory=/opt/demo_telemetria
+EnvironmentFile=-/opt/demo_telemetria/.env
+ExecStart=/opt/demo_telemetria/.venv/bin/python /opt/demo_telemetria/main.py all --interval ${simulation_interval}
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable telemetry_service
+systemctl restart telemetry_service
+
+echo "=============================================================================="
+echo "✅ [$(date -u)] Telemetry Simulator Service inicializado com sucesso!"
+echo "Status do serviço:"
+systemctl status telemetry_service --no-pager || true
+echo "=============================================================================="

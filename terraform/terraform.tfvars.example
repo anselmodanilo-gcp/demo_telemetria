@@ -1,0 +1,21 @@
+# Google Cloud Project ID
+project_id = "advance-mantis-506814-g5"
+
+# Region and Zone (us-central1)
+region = "us-central1"
+zone   = "us-central1-a"
+
+# Network Configurations
+network_name = "telemetry-vpc"
+subnet_cidr  = "10.10.0.0/24"
+
+# Compute Engine VM
+machine_type      = "e2-small"
+instance_name     = "telemetry-simulator-vm"
+boot_disk_size_gb = 20
+assign_public_ip  = true
+
+# Git Repo to clone during VM Startup
+git_repo_url        = "https://github.com/anselmodanilo-gcp/demo_telemetria.git"
+git_branch          = "main"
+simulation_interval = 4.0
