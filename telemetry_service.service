@@ -1,0 +1,21 @@
+[Unit]
+Description=GCP Commercial Vehicle Telemetry Simulation Service
+After=network.target
+
+[Service]
+Type=simple
+User=telemetry
+WorkingDirectory=/opt/demo_telemetria
+ExecStart=/opt/demo_telemetria/.venv/bin/python main.py all --interval 4.0
+Restart=always
+RestartSec=5s
+EnvironmentFile=-/opt/demo_telemetria/.env
+StandardOutput=journal
+StandardError=journal
+
+# Security Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

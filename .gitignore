@@ -1,0 +1,29 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite / Local Buffers
+*.db
+*.sqlite3
+*.sqlite
+
+# Environment variables
+.env
+
+# Pytest & IDE
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+
+# OS specific
+.DS_Store
+Thumbs.db
