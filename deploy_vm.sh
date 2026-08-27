@@ -1,68 +1,189 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Script de Deploy e Inicialização na VM do Google Cloud Compute Engine
+# Script de Deploy e Inicialização da Infraestrutura no GCP Compute Engine
+# Cria VPC customizada, Subnet, Regras de Firewall e VM automaticamente
 # ==============================================================================
-set -e
+set -euo pipefail
 
-PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "seu-projeto-gcp")
-ZONE="southamerica-east1-a" # São Paulo, Brasil
-INSTANCE_NAME="vm-telemetria-frota-brasil"
-MACHINE_TYPE="e2-medium"
+PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "demotelemetria")
+REGION="us-central1"
+ZONE="us-central1-a"
+NETWORK_NAME="telemetry-vpc"
+SUBNET_NAME="telemetry-subnet"
+SUBNET_CIDR="10.10.0.0/24"
+INSTANCE_NAME="telemetry-simulator-vm"
+MACHINE_TYPE="e2-small"
+REPO_URL="https://github.com/anselmodanilo-gcp/demo_telemetria.git"
 
 echo "=============================================================================="
 echo "🚀 DEPLOY DO SIMULADOR DE TELEMETRIA NO GOOGLE CLOUD COMPUTE ENGINE"
-echo "Projeto GCP: ${PROJECT_ID} | Zona: ${ZONE}"
+echo "Projeto GCP: ${PROJECT_ID} | Região: ${REGION} | Zona: ${ZONE}"
 echo "=============================================================================="
 
-# 1. Criação da Regra de Firewall para permitir acesso à porta 8000 (Dashboard e Ingestão)
-echo "1. Configurando Regra de Firewall para porta 8000 (Dashboard Web / API)..."
-gcloud compute firewall-rules create allow-telemetry-port-8000 \
-    --project="${PROJECT_ID}" \
-    --direction=INGRESS \
-    --priority=1000 \
-    --network=default \
-    --action=ALLOW \
-    --rules=tcp:8000 \
-    --source-ranges=0.0.0.0/0 \
-    --target-tags=telemetry-server || echo "Regra de firewall já existe ou foi mantida."
+# 1. Habilitar APIs necessárias
+echo "1. Habilitando APIs do Google Cloud (Compute Engine)..."
+gcloud services enable compute.googleapis.com --project="${PROJECT_ID}"
 
-# 2. Criação da VM no Compute Engine com Startup Script
-echo "2. Provisionando instância no Compute Engine (${MACHINE_TYPE} em ${ZONE})..."
-gcloud compute instances create "${INSTANCE_NAME}" \
-    --project="${PROJECT_ID}" \
-    --zone="${ZONE}" \
-    --machine-type="${MACHINE_TYPE}" \
-    --tags=http-server,https-server,telemetry-server \
-    --image-family=debian-12 \
-    --image-project=debian-cloud \
-    --boot-disk-size=20GB \
-    --boot-disk-type=pd-balanced \
-    --metadata=startup-script='#!/bin/bash
-      set -e
-      apt-get update
-      apt-get install -y git python3 python3-pip python3-venv curl sqlite3
+# 2. Criar VPC customizada se não existir
+echo "2. Verificando / Criando VPC Network '${NETWORK_NAME}'..."
+if ! gcloud compute networks describe "${NETWORK_NAME}" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute networks create "${NETWORK_NAME}" \
+        --project="${PROJECT_ID}" \
+        --subnet-mode=custom \
+        --mtu=1460 \
+        --bgp-routing-mode=regional
+    echo "✅ VPC '${NETWORK_NAME}' criada."
+else
+    echo "ℹ️  VPC '${NETWORK_NAME}' já existe."
+fi
 
-      # Criar usuário de serviço
-      useradd -m -s /bin/bash telemetry || true
+# 3. Criar Subnet se não existir
+echo "3. Verificando / Criando Subnet '${SUBNET_NAME}' em ${REGION} (${SUBNET_CIDR})..."
+if ! gcloud compute networks subnets describe "${SUBNET_NAME}" --region="${REGION}" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute networks subnets create "${SUBNET_NAME}" \
+        --project="${PROJECT_ID}" \
+        --network="${NETWORK_NAME}" \
+        --region="${REGION}" \
+        --range="${SUBNET_CIDR}" \
+        --enable-private-ip-google-access
+    echo "✅ Subnet '${SUBNET_NAME}' criada."
+else
+    echo "ℹ️  Subnet '${SUBNET_NAME}' já existe."
+fi
 
-      # Diretório da aplicação
-      mkdir -p /opt/demo_telemetria
-      cd /opt/demo_telemetria
+# 4. Criar Cloud Router e Cloud NAT para conectividade segura
+echo "4. Verificando Cloud Router e Cloud NAT..."
+if ! gcloud compute routers describe "${NETWORK_NAME}-router" --region="${REGION}" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute routers create "${NETWORK_NAME}-router" \
+        --project="${PROJECT_ID}" \
+        --network="${NETWORK_NAME}" \
+        --region="${REGION}"
+fi
 
-      # Clonar ou sincronizar arquivos
-      # git clone <seu-repo> . OU cópia direta
-      python3 -m venv /opt/demo_telemetria/.venv
-      /opt/demo_telemetria/.venv/bin/pip install --upgrade pip
-      /opt/demo_telemetria/.venv/bin/pip install fastapi uvicorn pydantic pydantic-settings aiohttp requests python-dotenv websockets rich
+if ! gcloud compute routers nats describe "${NETWORK_NAME}-nat" --router="${NETWORK_NAME}-router" --region="${REGION}" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute routers nats create "${NETWORK_NAME}-nat" \
+        --project="${PROJECT_ID}" \
+        --router="${NETWORK_NAME}-router" \
+        --region="${REGION}" \
+        --auto-allocate-nat-external-ips \
+        --nat-all-subnet-ip-ranges
+    echo "✅ Cloud NAT criado."
+fi
 
-      chown -R telemetry:telemetry /opt/demo_telemetria
-      echo "Startup script finalizado com sucesso."
-    '
+# 5. Criar Regras de Firewall
+echo "5. Configurando Regras de Firewall..."
+
+# SSH & IAP
+if ! gcloud compute firewall-rules describe "${NETWORK_NAME}-allow-ssh" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute firewall-rules create "${NETWORK_NAME}-allow-ssh" \
+        --project="${PROJECT_ID}" \
+        --network="${NETWORK_NAME}" \
+        --direction=INGRESS \
+        --priority=1000 \
+        --action=ALLOW \
+        --rules=tcp:22 \
+        --source-ranges=35.235.240.0/20,0.0.0.0/0 \
+        --target-tags=telemetry-server
+fi
+
+# Dashboard Web (Porta 8000) e Ingestão REST
+if ! gcloud compute firewall-rules describe "${NETWORK_NAME}-allow-telemetry-web" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute firewall-rules create "${NETWORK_NAME}-allow-telemetry-web" \
+        --project="${PROJECT_ID}" \
+        --network="${NETWORK_NAME}" \
+        --direction=INGRESS \
+        --priority=1000 \
+        --action=ALLOW \
+        --rules=tcp:8000,tcp:80,tcp:443 \
+        --source-ranges=0.0.0.0/0 \
+        --target-tags=telemetry-server
+fi
+
+# ICMP
+if ! gcloud compute firewall-rules describe "${NETWORK_NAME}-allow-icmp" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute firewall-rules create "${NETWORK_NAME}-allow-icmp" \
+        --project="${PROJECT_ID}" \
+        --network="${NETWORK_NAME}" \
+        --direction=INGRESS \
+        --priority=1000 \
+        --action=ALLOW \
+        --rules=icmp \
+        --source-ranges=0.0.0.0/0
+fi
+
+# 6. Provisionar Instância Compute Engine
+echo "6. Provisionando VM Compute Engine '${INSTANCE_NAME}' (${MACHINE_TYPE} em ${ZONE})..."
+
+if ! gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --project="${PROJECT_ID}" &>/dev/null; then
+    gcloud compute instances create "${INSTANCE_NAME}" \
+        --project="${PROJECT_ID}" \
+        --zone="${ZONE}" \
+        --machine-type="${MACHINE_TYPE}" \
+        --network="${NETWORK_NAME}" \
+        --subnet="${SUBNET_NAME}" \
+        --tags=http-server,https-server,telemetry-server \
+        --image-family=debian-12 \
+        --image-project=debian-cloud \
+        --boot-disk-size=20GB \
+        --boot-disk-type=pd-balanced \
+        --scopes=cloud-platform \
+        --metadata=startup-script='#!/bin/bash
+          set -euo pipefail
+          exec > >(tee -a /var/log/telemetry_startup.log) 2>&1
+          echo "Iniciando provisionamento do Telemetry Simulator..."
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          apt-get install -y git python3 python3-pip python3-venv curl sqlite3
+
+          useradd --system --no-create-home --shell /bin/false telemetry || true
+
+          APP_DIR="/opt/demo_telemetria"
+          mkdir -p "${APP_DIR}"
+          if [ ! -d "${APP_DIR}/.git" ]; then
+              git clone https://github.com/anselmodanilo-gcp/demo_telemetria.git "${APP_DIR}"
+          else
+              cd "${APP_DIR}" && git pull origin main
+          fi
+
+          cd "${APP_DIR}"
+          python3 -m venv "${APP_DIR}/.venv"
+          "${APP_DIR}/.venv/bin/pip" install --upgrade pip
+          "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/requirements.txt"
+
+          if [ ! -f "${APP_DIR}/.env" ]; then
+              cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
+          fi
+
+          chown -R telemetry:telemetry "${APP_DIR}"
+
+          cp "${APP_DIR}/telemetry_service.service" /etc/systemd/system/telemetry_service.service
+          systemctl daemon-reload
+          systemctl enable telemetry_service
+          systemctl restart telemetry_service
+          echo "Telemetry Service iniciado com sucesso!"
+        '
+    echo "✅ VM '${INSTANCE_NAME}' criada com sucesso."
+else
+    echo "ℹ️  VM '${INSTANCE_NAME}' já existe."
+fi
+
+# 7. Obter IP Público da VM
+EXTERNAL_IP=$(gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --project="${PROJECT_ID}" --format='get(networkInterfaces[0].accessConfigs[0].natIP)' 2>/dev/null || echo "")
 
 echo ""
 echo "=============================================================================="
-echo "✅ VM Provisionada com Sucesso!"
-echo "Para copiar o código local para a VM e iniciar o serviço:"
-echo "  gcloud compute scp --recurse /home/anselmodanilo/dev/demo_telemetria/* ${INSTANCE_NAME}:/opt/demo_telemetria --zone=${ZONE}"
-echo "  gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command='sudo cp /opt/demo_telemetria/telemetry_service.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now telemetry_service'"
+echo "🎉 DEPLOY CONCLUÍDO COM SUCESSO!"
+echo "=============================================================================="
+if [ -n "${EXTERNAL_IP}" ]; then
+    echo "🌐 Dashboard Web Interativo: http://${EXTERNAL_IP}:8000"
+    echo "📡 Endpoint Ingestão REST:   http://${EXTERNAL_IP}:8000/api/v1/telemetry"
+else
+    echo "🌐 Instância provisionada na VPC sem IP público direto (usando Cloud NAT)."
+fi
+echo ""
+echo "💻 Para acessar a VM via SSH:"
+echo "   gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID}"
+echo ""
+echo "📜 Para ver os logs da simulação em tempo real na VM:"
+echo "   gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --command='sudo journalctl -u telemetry_service -f'"
 echo "=============================================================================="
