@@ -122,6 +122,9 @@ if ! gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --pro
         --network="${NETWORK_NAME}" \
         --subnet="${SUBNET_NAME}" \
         --no-address \
+        --shielded-secure-boot \
+        --shielded-vtpm \
+        --shielded-integrity-monitoring \
         --tags=http-server,https-server,telemetry-server \
         --image-family=debian-12 \
         --image-project=debian-cloud \
