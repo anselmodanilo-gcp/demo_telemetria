@@ -53,9 +53,9 @@ variable "boot_disk_type" {
 }
 
 variable "assign_public_ip" {
-  description = "Whether to attach an external public IP to the VM for direct web dashboard access."
+  description = "Whether to attach an external public IP to the VM (defaults to false for enterprise compliance with compute.vmExternalIpAccess constraint)."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "git_repo_url" {

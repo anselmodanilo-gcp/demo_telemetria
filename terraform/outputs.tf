@@ -29,13 +29,18 @@ output "api_telemetry_url" {
 }
 
 output "ssh_command" {
-  description = "Google Cloud CLI command to SSH into the VM"
-  value       = "gcloud compute ssh ${google_compute_instance.telemetry_vm.name} --zone=${google_compute_instance.telemetry_vm.zone} --project=${var.project_id}"
+  description = "Google Cloud CLI command to SSH into the VM via IAP"
+  value       = "gcloud compute ssh ${google_compute_instance.telemetry_vm.name} --zone=${google_compute_instance.telemetry_vm.zone} --project=${var.project_id} --tunnel-through-iap"
+}
+
+output "dashboard_tunnel_command" {
+  description = "Port-forward command to open the live dashboard in your local browser or Cloud Shell"
+  value       = "gcloud compute ssh ${google_compute_instance.telemetry_vm.name} --zone=${google_compute_instance.telemetry_vm.zone} --project=${var.project_id} --tunnel-through-iap -- -L 8000:localhost:8000"
 }
 
 output "startup_logs_command" {
   description = "Command to follow startup and initialization logs on the VM"
-  value       = "gcloud compute ssh ${google_compute_instance.telemetry_vm.name} --zone=${google_compute_instance.telemetry_vm.zone} --project=${var.project_id} --command='sudo journalctl -u telemetry_service -f'"
+  value       = "gcloud compute ssh ${google_compute_instance.telemetry_vm.name} --zone=${google_compute_instance.telemetry_vm.zone} --project=${var.project_id} --tunnel-through-iap --command='sudo journalctl -u telemetry_service -f'"
 }
 
 output "vpc_network_name" {

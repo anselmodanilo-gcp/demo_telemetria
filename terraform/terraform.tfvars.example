@@ -13,7 +13,7 @@ subnet_cidr  = "10.10.0.0/24"
 machine_type      = "e2-small"
 instance_name     = "telemetry-simulator-vm"
 boot_disk_size_gb = 20
-assign_public_ip  = true
+assign_public_ip  = false
 
 # Git Repo to clone during VM Startup
 git_repo_url        = "https://github.com/anselmodanilo-gcp/demo_telemetria.git"

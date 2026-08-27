@@ -121,6 +121,7 @@ if ! gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --pro
         --machine-type="${MACHINE_TYPE}" \
         --network="${NETWORK_NAME}" \
         --subnet="${SUBNET_NAME}" \
+        --no-address \
         --tags=http-server,https-server,telemetry-server \
         --image-family=debian-12 \
         --image-project=debian-cloud \
@@ -162,28 +163,24 @@ if ! gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --pro
           systemctl restart telemetry_service
           echo "Telemetry Service iniciado com sucesso!"
         '
-    echo "✅ VM '${INSTANCE_NAME}' criada com sucesso."
+    echo "✅ VM '${INSTANCE_NAME}' criada com sucesso (segura via Cloud NAT e IAP)."
 else
     echo "ℹ️  VM '${INSTANCE_NAME}' já existe."
 fi
 
-# 7. Obter IP Público da VM
-EXTERNAL_IP=$(gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --project="${PROJECT_ID}" --format='get(networkInterfaces[0].accessConfigs[0].natIP)' 2>/dev/null || echo "")
-
 echo ""
 echo "=============================================================================="
-echo "🎉 DEPLOY CONCLUÍDO COM SUCESSO!"
+echo "🎉 DEPLOY CONCLUÍDO COM SUCESSO NA VPC '${NETWORK_NAME}'!"
 echo "=============================================================================="
-if [ -n "${EXTERNAL_IP}" ]; then
-    echo "🌐 Dashboard Web Interativo: http://${EXTERNAL_IP}:8000"
-    echo "📡 Endpoint Ingestão REST:   http://${EXTERNAL_IP}:8000/api/v1/telemetry"
-else
-    echo "🌐 Instância provisionada na VPC sem IP público direto (usando Cloud NAT)."
-fi
+echo "🔒 A VM foi provisionada em rede privada segura com Cloud NAT."
 echo ""
-echo "💻 Para acessar a VM via SSH:"
-echo "   gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID}"
+echo "🌐 Para abrir o Dashboard Web no seu navegador ou Cloud Shell:"
+echo "   1. Abra um túnel de porta via IAP:"
+echo "      gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --tunnel-through-iap -- -L 8000:localhost:8000"
+echo ""
+echo "   2. No Cloud Shell, clique no botão 'Web Preview' (Visualização na Web) na porta 8000,"
+echo "      ou abra no seu navegador local: http://localhost:8000"
 echo ""
 echo "📜 Para ver os logs da simulação em tempo real na VM:"
-echo "   gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --command='sudo journalctl -u telemetry_service -f'"
+echo "   gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --tunnel-through-iap --command='sudo journalctl -u telemetry_service -f'"
 echo "=============================================================================="
